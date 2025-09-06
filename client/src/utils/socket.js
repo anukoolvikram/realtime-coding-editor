@@ -1,20 +1,6 @@
-// import { io } from 'socket.io-client';
-
-// export const initSocket = async () => {
-//   const options = {
-//     forceNew: true,                
-//     reconnectionAttempts: Infinity,
-//     timeout: 10000,
-//     transports: ['websocket'],
-//   };
-//   return io(import.meta.env.VITE_BACKEND_URL, options);
-// };
-
-
 import { io } from 'socket.io-client';
 
 const BACKEND_URL =
-  import.meta.env.VITE_SOCKET_URL ||
   import.meta.env.VITE_BACKEND_URL ||
   (import.meta.env.DEV ? 'http://localhost:3001' : `${location.protocol}//${location.host}`);
 

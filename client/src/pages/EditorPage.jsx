@@ -33,7 +33,7 @@ export default function EditorPage() {
     setRunning(true);
     try {
       const res = await executeCode({
-        language,                  // <- use page state, not RunBar’s own
+        language,                 
         code: codeRef.current || '',
         stdin,
       });
@@ -80,7 +80,6 @@ export default function EditorPage() {
         setClients(prev => prev.filter(c => c.socketId !== socketId));
       });
 
-      // OPTIONAL: if you want language/theme sync across users
       socketRef.current.on(ACTIONS.LANGUAGE_CHANGE, ({ language }) => setLanguage(language));
       socketRef.current.on(ACTIONS.THEME_CHANGE, ({ theme }) => setTheme(theme));
     })();
