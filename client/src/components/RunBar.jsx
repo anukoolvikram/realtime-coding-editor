@@ -2,9 +2,9 @@
 import { useState } from 'react';
 
 const RUNNABLE = [
-  { label: 'JavaScript (Node)', value: 'javascript' },
-  { label: 'Python 3', value: 'python' },
-  { label: 'C++ (GCC)', value: 'cpp' },
+  { label: 'JavaScript', value: 'javascript' },
+  { label: 'Python', value: 'python' },
+  // { label: 'C++ (GCC)', value: 'cpp' },
 ];
 
 export default function RunBar({ running, language, onChangeLanguage, onRun }) {
