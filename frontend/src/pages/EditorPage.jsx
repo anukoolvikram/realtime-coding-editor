@@ -48,7 +48,6 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (!username || !roomId) {
-      console.log('⏸️ Skipping socket init - missing username or roomId');
       return;
     }
     let mounted = true;
@@ -126,6 +125,8 @@ export default function EditorPage() {
       socketRef.current.on(ACTIONS.THEME_CHANGE, handleThemeChange);
       socketRef.current.on(ACTIONS.CODE_CHANGE, handleCodeChange);
       socketRef.current.on(ACTIONS.SYNC_CODE, handleSyncCode);
+
+      socketRef.current.connect();
     };
     initializeSocket();
 
@@ -142,7 +143,6 @@ export default function EditorPage() {
         socketRef.current.off(ACTIONS.SYNC_CODE);
 
         socketRef.current.disconnect();
-        socketRef.current = null;
       }
     };
   }, [roomId, username]);
