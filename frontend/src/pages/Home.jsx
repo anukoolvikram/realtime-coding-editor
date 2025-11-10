@@ -22,6 +22,12 @@ export default function Home() {
       toast.error('Room ID & Username are required.');
       return;
     }
+
+    // --- THIS IS THE FIX ---
+    // Save the username so it persists after page loads
+    localStorage.setItem('username', username);
+    // --- END OF FIX ---
+
     navigate(`/editor/${roomId}`, {
       state: {
         username,

@@ -1,181 +1,298 @@
-import React, { useState, useRef, useEffect } from 'react';
+/* eslint-disable no-unused-vars */
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import ACTIONS from '../utils/Actions';
 import { initSocket } from '../utils/socket';
 import { useLocation, useNavigate, Navigate, useParams } from 'react-router-dom';
-import { executeCode } from '../utils/api';
+import { executeCode, executeCodeStreaming } from '../utils/api';
 
-// Import the new/improved components
+// Import your components
 import Sidebar from '../components/Sidebar';
 import Editor from '../components/Editor';
 import MobileHeader from '../components/MobileHeader';
 import RunBar from '../components/RunBar';
 import OutputPanel from '../components/OutputPanel';
 
+const getUsername = (location) => {
+  const fromState = location?.state?.username;
+  if (fromState) {
+    try {
+      localStorage.setItem('username', fromState);
+    } catch (e) {
+      console.log(e);
+    }
+    return fromState;
+  }
+  try {
+    return localStorage.getItem('username');
+  } catch (e) {
+    return null;
+  }
+};
+
 export default function EditorPage() {
   const socketRef = useRef(null);
-  const codeRef = useRef(''); // Use ref to sync code for new joiners
+  const codeRef = useRef('');
   const location = useLocation();
   const { roomId } = useParams();
   const navigate = useNavigate();
 
-  const [clients, setClients] = useState([]);
+  const username = getUsername(location);
 
-  // Default to a clean, light theme
+  // All hooks must be called before any conditional returns
+  const [clients, setClients] = useState([]);
   const [language, setLanguage] = useState('javascript');
   const [theme, setTheme] = useState('github');
-  
   const [running, setRunning] = useState(false);
   const [execResult, setExecResult] = useState(null);
 
-  // This effect handles all socket connection and event logic
   useEffect(() => {
+    if (!username || !roomId) {
+      console.log('⏸️ Skipping socket init - missing username or roomId');
+      return;
+    }
     let mounted = true;
 
-    const init = async () => {
-      socketRef.current = await initSocket();
+    const initializeSocket = () => {
+      socketRef.current = initSocket();
 
-      const onErr = (e) => {
-        console.error('Socket error', e);
-        toast.error('Socket connection failed, try again later.');
-        navigate('/');
+      const handleConnect = () => {
+        if (!mounted) return;
+
+        socketRef.current.emit(ACTIONS.JOIN, {
+          roomId,
+          username,
+        });
       };
 
-      socketRef.current.on('connect_error', onErr);
-      socketRef.current.on('connect_failed', onErr);
-
-      // Emit the JOIN event with username
-      socketRef.current.emit(ACTIONS.JOIN, {
-        roomId,
-        username: location.state?.username,
-      });
-
-      // --- Listen for events from server ---
-
-      // A new user joined
-      socketRef.current.on(ACTIONS.JOINED, ({ clients, username, socketId }) => {
+      const handleConnectError = (error) => {
         if (!mounted) return;
-        if (username !== location.state?.username) {
-          toast.success(`${username} joined the room.`);
+        toast.error('Connection failed. Please try again.');
+      };
+
+      const handleJoined = ({ clients: joinedClients, username: joinedUsername, socketId }) => {
+        if (!mounted) return;
+        if (joinedUsername !== username) {
+          toast.success(`${joinedUsername} joined the room.`);
         }
-        setClients(clients);
-        // SYNC: Send the current code to the new user
-        socketRef.current.emit(ACTIONS.SYNC_CODE, { 
-          code: codeRef.current, 
-          socketId 
-        });
-        // SYNC: Send the current language and theme
-        socketRef.current.emit(ACTIONS.LANGUAGE_CHANGE, { roomId, language });
-        socketRef.current.emit(ACTIONS.THEME_CHANGE, { roomId, theme });
-      });
+        setClients(joinedClients || []);
+        if (socketRef.current) {
+          socketRef.current.emit(ACTIONS.SYNC_CODE, {
+            code: codeRef.current,
+            socketId
+          });
+        }
+      };
 
-      // A user disconnected
-      socketRef.current.on(ACTIONS.DISCONNECTED, ({ socketId, username }) => {
+      const handleDisconnected = ({ socketId, username: leftUsername }) => {
         if (!mounted) return;
-        toast.success(`${username} left the room.`);
-        setClients((prev) => prev.filter((c) => c.socketId !== socketId));
-      });
+        console.log('👋 User disconnected:', leftUsername);
+        toast.success(`${leftUsername} left the room.`);
+        setClients(prev => prev.filter(client => client.socketId !== socketId));
+      };
 
-      // A user changed the language
-      socketRef.current.on(ACTIONS.LANGUAGE_CHANGE, ({ language }) => {
-        if (mounted) setLanguage(language);
-      });
+      const handleLanguageChange = ({ language: newLang }) => {
+        if (mounted && newLang) {
+          console.log('🌐 Language change received:', newLang);
+          setLanguage(newLang);
+        }
+      };
 
-      // A user changed the theme
-      socketRef.current.on(ACTIONS.THEME_CHANGE, ({ theme }) => {
-        if (mounted) setTheme(theme);
-      });
+      const handleThemeChange = ({ theme: newTheme }) => {
+        if (mounted && newTheme) {
+          console.log('🎨 Theme change received:', newTheme);
+          setTheme(newTheme);
+        }
+      };
+
+      const handleCodeChange = ({ code: newCode }) => {
+        if (mounted && newCode !== null) {
+          codeRef.current = newCode; 
+        }
+      };
+
+      const handleSyncCode = ({ code: syncedCode }) => {
+        if (mounted && syncedCode !== null) {
+          codeRef.current = syncedCode;
+        }
+      };
+
+      // Set up event listeners
+      socketRef.current.on('connect', handleConnect);
+      socketRef.current.on('connect_error', handleConnectError);
+      socketRef.current.on(ACTIONS.JOINED, handleJoined);
+      socketRef.current.on(ACTIONS.DISCONNECTED, handleDisconnected);
+      socketRef.current.on(ACTIONS.LANGUAGE_CHANGE, handleLanguageChange);
+      socketRef.current.on(ACTIONS.THEME_CHANGE, handleThemeChange);
+      socketRef.current.on(ACTIONS.CODE_CHANGE, handleCodeChange);
+      socketRef.current.on(ACTIONS.SYNC_CODE, handleSyncCode);
     };
+    initializeSocket();
 
-    init();
-
-    // Cleanup logic
     return () => {
       mounted = false;
-      if (!socketRef.current) return;
-      socketRef.current.off(ACTIONS.JOINED);
-      socketRef.current.off(ACTIONS.DISCONNECTED);
-      socketRef.current.off('connect_error');
-      socketRef.current.off('connect_failed');
-      socketRef.current.off(ACTIONS.LANGUAGE_CHANGE);
-      socketRef.current.off(ACTIONS.THEME_CHANGE);
-      socketRef.current.disconnect();
+      if (socketRef.current) {
+        socketRef.current.off('connect');
+        socketRef.current.off('connect_error');
+        socketRef.current.off(ACTIONS.JOINED);
+        socketRef.current.off(ACTIONS.DISCONNECTED);
+        socketRef.current.off(ACTIONS.LANGUAGE_CHANGE);
+        socketRef.current.off(ACTIONS.THEME_CHANGE);
+        socketRef.current.off(ACTIONS.CODE_CHANGE);
+        socketRef.current.off(ACTIONS.SYNC_CODE);
+
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
     };
-  }, [roomId, navigate, location.state?.username, language, theme]); // Added language/theme
+  }, [roomId, username]);
 
-  // --- Helper Functions ---
+  // Event handlers
+  const onLanguageChange = useCallback((newLanguage) => {
+    setLanguage(newLanguage);
+    if (socketRef.current) {
+      socketRef.current.emit(ACTIONS.LANGUAGE_CHANGE, { roomId, language: newLanguage });
+    }
+  }, [roomId]);
 
-  async function handleRun(stdin) {
+  const onThemeChange = useCallback((newTheme) => {
+    setTheme(newTheme);
+    if (socketRef.current) {
+      socketRef.current.emit(ACTIONS.THEME_CHANGE, { roomId, theme: newTheme });
+    }
+  }, [roomId]);
+
+  const onCodeChange = useCallback((code) => {
+    codeRef.current = code;
+    if (socketRef.current) {
+      socketRef.current.emit(ACTIONS.CODE_CHANGE, { roomId, code });
+    }
+  }, [roomId]);
+
+  // Enhanced handleRun with better error handling
+  const handleRun = useCallback(async (stdin) => {    
     setRunning(true);
-    setExecResult(null); // Clear previous results
+    setExecResult({ 
+      stdout: '', 
+      stderr: '', 
+      exitCode: null, 
+      isStreaming: true,
+      time: null,
+      memory: null
+    });
+
     try {
-      const res = await executeCode({
+      await executeCodeStreaming({
         language,
         code: codeRef.current || '',
         stdin,
+        onData: (data) => {          
+          switch (data.type) {
+            case 'stdout':
+              setExecResult(prev => ({
+                ...prev,
+                stdout: prev.stdout + data.content,
+              }));
+              break;
+              
+            case 'stderr':
+              setExecResult(prev => ({
+                ...prev,
+                stderr: prev.stderr + data.content,
+              }));
+              break;
+              
+            case 'complete':
+              console.log('✅ Execution complete. Exit code:', data.exitCode);
+              setExecResult(prev => ({
+                ...prev,
+                exitCode: data.exitCode,
+                time: data.time,
+                memory: data.memory,
+                isStreaming: false,
+              }));
+              break;
+              
+            case 'error':
+              console.error('❌ Execution error:', data.content);
+              setExecResult(prev => ({
+                ...prev,
+                stderr: prev.stderr + '\n' + data.content,
+                exitCode: -1,
+                isStreaming: false,
+              }));
+              toast.error('Execution failed: ' + data.content);
+              break;
+          }
+        }
       });
-      setExecResult(res);
     } catch (e) {
-      setExecResult({ stdout: '', stderr: String(e), exitCode: -1 });
+      console.error('❌ Run error:', e);
+      setExecResult({ 
+        stdout: '', 
+        stderr: String(e.message || e), 
+        exitCode: -1, 
+        isStreaming: false 
+      });
+      toast.error('Execution failed');
     } finally {
       setRunning(false);
+      console.log('🏁 Run completed');
     }
-  }
+  }, [language]);
 
   const copyRoomId = async () => {
     try {
       await navigator.clipboard.writeText(roomId);
-      toast.success('Room ID copied to clipboard');
+      toast.success('Room ID copied to clipboard.');
     } catch (err) {
-      toast.error('Could not copy Room ID');
-      console.error(err);
+      toast.error('Failed to copy room ID.');
     }
   };
 
-  const leaveRoom = () => navigate('/');
+  const leaveRoom = () => {
+    try {
+      localStorage.removeItem('username');
+    } catch (e) {
+      console.log(e);
+    }
+    navigate('/');
+  };
 
   const downloadCode = () => {
-    const fileExtension = {
+    const blob = new Blob([codeRef.current || ''], { type: 'text/plain;charset=utf-8' });
+    const extensions = {
       javascript: 'js',
       python: 'py',
-      cpp: 'cpp',
+      'c++': 'cpp',
       c: 'c',
       java: 'java',
-    }[language] || 'txt';
-    
-    const element = document.createElement('a');
-    const file = new Blob([codeRef.current], { type: 'text/plain' });
-    element.href = URL.createObjectURL(file);
-    element.download = `code-${roomId.slice(0, 5)}.${fileExtension}`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-    toast.success('Code downloaded');
+      ruby: 'rb',
+      go: 'go',
+      rust: 'rs',
+      typescript: 'ts',
+    };
+    const ext = extensions[language] || 'txt';
+    const fileName = `code.${ext}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Code downloaded.');
   };
 
-  // --- Event Handlers for Child Components ---
+  // Early return AFTER all hooks have been called
+  if (!username) {
+    console.log('➡️ Redirecting to home - no username');
+    return <Navigate to="/" replace />;
+  }
 
-  const onCodeChange = (code) => {
-    codeRef.current = code;
-    socketRef.current?.emit(ACTIONS.CODE_CHANGE, { roomId, code });
-  };
-
-  const onLanguageChange = (newLanguage) => {
-    setLanguage(newLanguage);
-    socketRef.current?.emit(ACTIONS.LANGUAGE_CHANGE, { roomId, language: newLanguage });
-  };
-
-  const onThemeChange = (newTheme) => {
-    setTheme(newTheme);
-    socketRef.current?.emit(ACTIONS.THEME_CHANGE, { roomId, theme: newTheme });
-  };
-
-  // If user lands here without state (e.g., direct URL), redirect to Home
-  if (!location.state) return <Navigate to="/" />;
+  console.log('🎨 Rendering EditorPage UI');
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row">
-      {/* Sidebar (Desktop) */}
       <Sidebar
         clients={clients}
         copyRoomId={copyRoomId}
@@ -186,17 +303,8 @@ export default function EditorPage() {
         onLanguageChange={onLanguageChange}
         onThemeChange={onThemeChange}
       />
-
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-h-screen md:h-screen overflow-hidden">
-        {/* Mobile Header */}
-        <MobileHeader
-          clients={clients}
-          copyRoomId={copyRoomId}
-          leaveRoom={leaveRoom}
-        />
-
-        {/* Editor Wrapper (allows it to grow and shrink) */}
+        <MobileHeader clients={clients} copyRoomId={copyRoomId} leaveRoom={leaveRoom} />
         <div className="flex-1 min-h-0">
           <Editor
             socketRef={socketRef}
@@ -206,15 +314,8 @@ export default function EditorPage() {
             theme={theme}
           />
         </div>
-
-        {/* Bottom Panel (Run Bar + Output) */}
         <div className="flex-shrink-0 border-t border-gray-200">
-          <RunBar
-            running={running}
-            language={language}
-            onLanguageChange={onLanguageChange}
-            onRun={handleRun} // Pass the handleRun function directly
-          />
+          <RunBar running={running} language={language} onLanguageChange={onLanguageChange} onRun={handleRun} />
           <OutputPanel result={execResult} />
         </div>
       </div>

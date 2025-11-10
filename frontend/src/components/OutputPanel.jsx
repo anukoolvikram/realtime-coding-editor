@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable no-unused-vars */
 // src/components/OutputPanel.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   CheckCircleIcon,
   XCircleIcon,
@@ -10,11 +10,12 @@ import {
 } from '@heroicons/react/24/outline';
 
 const getExitCodeClass = (code) => {
-  if (code === null) return 'text-gray-500';
+  if (code === null || code === undefined) return 'text-gray-500';
   return code === 0 ? 'text-green-500' : 'text-red-500';
 };
+
 const getExitCodeIcon = (code) => {
-  if (code === null) return null;
+  if (code === null || code === undefined) return null;
   return code === 0 
     ? <CheckCircleIcon className="w-4 h-4 inline-block mr-1" />
     : <XCircleIcon className="w-4 h-4 inline-block mr-1" />;
@@ -22,6 +23,8 @@ const getExitCodeIcon = (code) => {
 
 export default function OutputPanel({ result }) {
   const [tab, setTab] = useState('output'); // 'output' or 'error'
+  const outputRef = useRef(null);
+  const errorRef = useRef(null);
 
   const {
     stdout = '',
@@ -29,18 +32,31 @@ export default function OutputPanel({ result }) {
     exitCode = null,
     time = null,
     memory = null,
+    isStreaming = false, // Add this flag to your result object
   } = result || {};
 
   // Automatically switch to error tab if there's an error
   useEffect(() => {
-    if (stderr) {
+    if (stderr && !isStreaming) {
       setTab('error');
-    } else {
+    } else if (result && !stderr && !isStreaming) {
       setTab('output');
     }
-  }, [result]);
+  }, [stderr, result, isStreaming]);
 
-  const hasOutput = stdout || stderr;
+  // Auto-scroll to bottom when new content arrives
+  useEffect(() => {
+    if (tab === 'output' && outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [stdout, tab]);
+
+  useEffect(() => {
+    if (tab === 'error' && errorRef.current) {
+      errorRef.current.scrollTop = errorRef.current.scrollHeight;
+    }
+  }, [stderr, tab]);
+
   const hasDetails = time !== null || memory !== null;
 
   return (
@@ -62,7 +78,10 @@ export default function OutputPanel({ result }) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 p-4 overflow-auto">
+      <div 
+        ref={tab === 'output' ? outputRef : errorRef}
+        className="flex-1 p-4 overflow-auto"
+      >
         {!result && (
           <span className="text-gray-500">
             Click "Run" to execute your code.
@@ -70,9 +89,16 @@ export default function OutputPanel({ result }) {
         )}
 
         {result && tab === 'output' && (
-          <pre className="whitespace-pre-wrap">
-            {stdout || <span className="text-gray-500">No standard output.</span>}
-          </pre>
+          <>
+            {isStreaming && (
+              <div className="mb-2 text-yellow-400 animate-pulse">
+                ⚡ Running...
+              </div>
+            )}
+            <pre className="whitespace-pre-wrap">
+              {stdout || (!isStreaming && <span className="text-gray-500">No standard output.</span>)}
+            </pre>
+          </>
         )}
 
         {result && tab === 'error' && (
@@ -83,7 +109,7 @@ export default function OutputPanel({ result }) {
       </div>
 
       {/* Footer / Status Bar */}
-      {result && (
+      {result && !isStreaming && (
         <div className="flex items-center gap-4 p-2 bg-gray-900 
                       text-xs border-t border-gray-700">
           <span
@@ -104,6 +130,15 @@ export default function OutputPanel({ result }) {
               </span>
             </>
           )}
+        </div>
+      )}
+
+      {/* Streaming indicator in footer */}
+      {result && isStreaming && (
+        <div className="flex items-center gap-2 p-2 bg-gray-900 
+                      text-xs border-t border-gray-700">
+          <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
+          <span className="text-yellow-400">Executing...</span>
         </div>
       )}
     </div>

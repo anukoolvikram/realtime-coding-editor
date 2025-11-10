@@ -1,40 +1,30 @@
 const ACTIONS = require('./actions');
-const { sanitizeRoomId, sanitizeUsername } = require('../utils/validators');
 
-const userSocketMap = new Map(); 
-
-function getClientsInRoom(io, roomId) {
-  if (!roomId) return [];
-  const room = io.sockets.adapter.rooms.get(roomId) || new Set();
-  return [...room].map(socketId => {
-    const u = userSocketMap.get(socketId) || {};
-    return { socketId, username: u.username || 'Anonymous' };
+async function getClientsInRoom(io, roomId) {
+  const sockets = await io.in(roomId).fetchSockets(); 
+  return sockets.map(socket => {
+    return {
+      socketId: socket.id,
+      username: socket.username || 'Anonymous',
+    };
   });
 }
 
 function registerSocketHandlers(io) {
   io.on('connection', (socket) => {
-    // join
-    socket.on(ACTIONS.JOIN, (payload = {}) => {
+    console.log(`Socket connected: ${socket.id}`);
+
+    //JOIN
+    socket.on(ACTIONS.JOIN, async (payload = {}) => {
       try {
-        const roomId = sanitizeRoomId(payload.roomId);
-        const username = sanitizeUsername(payload.username);
+        const { roomId, username = 'Anonymous' } = payload;
         if (!roomId) return socket.emit('error', 'invalid room');
+        socket.username = username;
+        await socket.join(roomId);
+        const clients = await getClientsInRoom(io, roomId);
+        console.log(`User ${username} (${socket.id}) joined room ${roomId}`);
 
-        userSocketMap.set(socket.id, { username, roomId });
-        socket.join(roomId);
-
-        const clients = getClientsInRoom(io, roomId);
-
-        // notify others
-        socket.to(roomId).emit(ACTIONS.JOINED, {
-          clients,
-          username,
-          socketId: socket.id,
-        });
-
-        // confirm to the joining socket
-        socket.emit(ACTIONS.JOINED, {
+        io.in(roomId).emit(ACTIONS.JOINED, {
           clients,
           username,
           socketId: socket.id,
@@ -45,54 +35,41 @@ function registerSocketHandlers(io) {
       }
     });
 
-    // code changes
+    // CODE CHANGES
     socket.on(ACTIONS.CODE_CHANGE, (payload = {}) => {
-      const roomId = sanitizeRoomId(payload.roomId) || userSocketMap.get(socket.id)?.roomId;
-      const code = typeof payload.code === 'string' ? payload.code : null;
-      if (!roomId || code === null) return;
+      const { roomId, code } = payload;
       socket.to(roomId).emit(ACTIONS.CODE_CHANGE, { code });
     });
 
     // request sync (send specific socket the code)
     socket.on(ACTIONS.SYNC_CODE, (payload = {}) => {
-      const target = payload.socketId;
-      const code = typeof payload.code === 'string' ? payload.code : null;
-      if (!target || code === null) return;
-      io.to(target).emit(ACTIONS.CODE_CHANGE, { code });
+      const { socketId, code } = payload;
+      io.to(socketId).emit(ACTIONS.CODE_CHANGE, { code });
     });
 
     // language/theme changes
     socket.on(ACTIONS.LANGUAGE_CHANGE, (payload = {}) => {
-      const roomId = sanitizeRoomId(payload.roomId) || userSocketMap.get(socket.id)?.roomId;
-      const language = typeof payload.language === 'string' ? payload.language : null;
-      if (!roomId || !language) return;
+      const { roomId, language } = payload;
       socket.to(roomId).emit(ACTIONS.LANGUAGE_CHANGE, { language });
     });
 
     socket.on(ACTIONS.THEME_CHANGE, (payload = {}) => {
-      const roomId = sanitizeRoomId(payload.roomId) || userSocketMap.get(socket.id)?.roomId;
-      const theme = typeof payload.theme === 'string' ? payload.theme : null;
-      if (!roomId || !theme) return;
+      const { roomId, theme } = payload;
       socket.to(roomId).emit(ACTIONS.THEME_CHANGE, { theme });
     });
 
-    // handle explicit leave
-    socket.on(ACTIONS.LEAVE, () => {
-      const data = userSocketMap.get(socket.id);
-      if (data?.roomId) {
-        socket.to(data.roomId).emit(ACTIONS.DISCONNECTED, { socketId: socket.id, username: data.username });
-      }
-      userSocketMap.delete(socket.id);
-      socket.leave(data?.roomId || null);
-    });
-
-    // cleanup on disconnect
-    socket.on('disconnect', (reason) => {
-      const u = userSocketMap.get(socket.id);
-      if (u?.roomId) {
-        socket.to(u.roomId).emit(ACTIONS.DISCONNECTED, { socketId: socket.id, username: u.username, reason });
-      }
-      userSocketMap.delete(socket.id);
+    socket.on('disconnecting', () => {
+      const username = socket.username || 'Anonymous';
+      console.log(`Socket disconnecting: ${socket.id}, User: ${username}`);
+      
+      socket.rooms.forEach(roomId => {
+        if (roomId !== socket.id) { 
+          socket.to(roomId).emit(ACTIONS.DISCONNECTED, {
+            socketId: socket.id,
+            username: username,
+          });
+        }
+      });
     });
   });
 }
